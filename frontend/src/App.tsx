@@ -1,4 +1,6 @@
+import HomePage from "./screens/Home";
+
 const App = () => {
-  return <div>App</div>;
+  return <HomePage />;
 };
 export default App;
