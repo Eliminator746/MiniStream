@@ -1,8 +1,67 @@
-import React, { useState } from "react";
+import { useNavigate, useLocation, Link } from "react-router-dom";
+import React, { useEffect, useState } from "react";
 import { FiEye, FiEyeOff } from "react-icons/fi";
+import { useDispatch } from "react-redux";
+import { useAppSelector } from "@/store/hooks";
+import { useLoginMutation } from "@/features/apiSlice";
+import { setCredentials } from "@/features/authSlice";
 
 const LoginPage: React.FC = () => {
-  const [showPassword, setShowPassword] = useState(false);
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const [login, { isLoading }] = useLoginMutation();
+
+  const { user: userInfo } = useAppSelector((state) => state.auth);
+
+  const sp = new URLSearchParams(location.search);
+  const redirect = sp.get("redirect") || "/";
+
+  useEffect(() => {
+    if (userInfo) {
+      navigate(redirect);
+    }
+  }, [userInfo, navigate, redirect]);
+
+  const [formData, setFormData] = useState({
+    email: "",
+    password: "",
+    showPassword: false,
+  });
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFormData({
+      ...formData,
+      [e.target.name]: e.target.value,
+    });
+  };
+
+  const togglePassword = () => {
+    setFormData({
+      ...formData,
+      showPassword: !formData.showPassword,
+    });
+  };
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    try {
+      const res = await login({
+        email: formData.email,
+        password: formData.password,
+      }).unwrap();
+
+      dispatch(
+        setCredentials({
+          user: res.user,
+          token: res.token,
+        }),
+      );
+    } catch (err) {
+      console.error("Login failed:", err);
+    }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 p-6">
@@ -25,26 +84,32 @@ const LoginPage: React.FC = () => {
           </h1>
 
           {/* Form */}
-          <form className="flex flex-col gap-4 mt-4">
+          <form className="flex flex-col gap-4 mt-4" onSubmit={handleSubmit}>
             <input
               type="email"
+              name="email"
               placeholder="Email"
+              value={formData.email}
+              onChange={handleChange}
               className="bg-gray-100 px-5 py-3 rounded-full outline-none focus:ring-2 focus:ring-teal-400"
             />
 
             <div className="flex items-center bg-gray-100 rounded-full px-5">
               <input
-                type={showPassword ? "text" : "password"}
+                type={formData.showPassword ? "text" : "password"}
                 placeholder="Password"
+                name="password"
+                value={formData.password}
+                onChange={handleChange}
                 className="flex-1 py-3 bg-transparent outline-none"
               />
 
               <button
                 type="button"
-                onClick={() => setShowPassword(!showPassword)}
+                onClick={togglePassword}
                 className="text-gray-500"
               >
-                {!showPassword ? <FiEyeOff /> : <FiEye />}
+                {!formData.showPassword ? <FiEyeOff /> : <FiEye />}
               </button>
             </div>
 

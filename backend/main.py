@@ -7,10 +7,14 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import os, shutil, datetime, uuid
 from dotenv import load_dotenv
 from pathlib import Path
+import subprocess
+from fastapi.staticfiles import StaticFiles
+
 
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 DATABASE_URL = os.getenv("DATABASE_URL")
+THUMBNAIL_DIR = os.getenv("THUMBNAIL_DIR")
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
@@ -36,6 +40,7 @@ class Video(Base):
     title = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
     filename = Column(String(255), nullable=False)
+    thumbnail = Column(String)
     likes = Column(Integer, default=0)
 
     uploader_id = Column(Integer, ForeignKey("users.id"))
@@ -69,9 +74,23 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware, 
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def generate_thumbnail(video_path: str, thumbnail_path: str):
+    os.makedirs("thumbnails", exist_ok=True)
+    subprocess.run([
+        "ffmpeg",
+        "-i", video_path,
+        "-ss", "00:00:01",
+        "-vframes", "1",
+        thumbnail_path
+    ],check=True)
+
+
+app.mount("/thumbnails", StaticFiles(directory="thumbnails"), name="thumbnails")
 
 def get_db():
     db = SessionLocal()
@@ -156,12 +175,20 @@ async def upload_video(
     # save file
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
+    
+    # generate thumbnail filename
+    thumbnail_name = f"{uuid.uuid4()}.jpg"
+    thumbnail_path = os.path.join(THUMBNAIL_DIR, thumbnail_name)
+
+    # generate thumbnail
+    generate_thumbnail(file_path, thumbnail_path)
 
     # create video record
     new_video = Video(
         title=title,
         description=description,
         filename=unique_name,
+        thumbnail=thumbnail_name,
         uploader_id=user.id
     )
 
@@ -172,7 +199,9 @@ async def upload_video(
     return {
         "message": "Video uploaded successfully",
         "video_id": new_video.id,
-        "filename": unique_name
+        "filename": unique_name,
+        "thumbnail": thumbnail_name
+        
     }
     
 @app.get("/videos")
@@ -184,9 +213,11 @@ async def get_videos(
     # list comprehension below I've wrote
     return [
         {
+            "id": video.id,
             "title": video.title,
             "description": video.description,
             "filename": video.filename,
+            "thumbnail": video.thumbnail,
             "likes": video.likes,
             "uploader": video.uploader.name
         }

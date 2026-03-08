@@ -1,28 +1,19 @@
-import React from "react";
-import { Video } from "../data/videos";
+const VideoCard = ({ video }) => {
+  const thumbnailUrl = video.thumbnail
+    ? `http://localhost:8000/thumbnails/${video.thumbnail}`
+    : "/default-thumbnail.png";
 
-interface Props {
-  video: Video;
-}
-
-const VideoCard: React.FC<Props> = ({ video }) => {
   return (
-    <div className="flex flex-col gap-2 cursor-pointer">
+    <div className="flex flex-col cursor-pointer">
       <img
-        src={video.thumbnail}
+        src={thumbnailUrl}
         alt={video.title}
-        className="rounded-lg w-full h-44 object-cover"
+        className="rounded-lg w-full h-48 object-cover"
       />
 
-      <h3 className="text-sm font-semibold text-gray-800 line-clamp-2">
-        {video.title}
-      </h3>
+      <h3 className="text-sm font-semibold mt-2">{video.title}</h3>
 
-      <p className="text-xs text-gray-600">{video.channel}</p>
-
-      <p className="text-xs text-gray-500">
-        {video.views} • {video.time}
-      </p>
+      <p className="text-xs text-gray-500">{video.uploader}</p>
     </div>
   );
 };
