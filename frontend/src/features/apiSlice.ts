@@ -7,6 +7,10 @@ import type {
   Comment,
   LikeResponse,
   LikeCheckResponse,
+  VideoMetadata,
+  UserVideo,
+  CommentsResponse,
+  CommentEditResponse,
 } from "./types";
 import type { RootState } from "@/store/store";
 import { setCredentials, logout as logoutAction } from "./authSlice";
@@ -118,6 +122,24 @@ export const apiSlice = createApi({
       }),
     }),
 
+    getVideoMetadata: builder.query<VideoMetadata, number>({
+      query: (videoId) => ({
+        url: `/video/metadata/${videoId}`,
+        method: "GET",
+      }),
+      providesTags: (result, error, videoId) => [
+        { type: "Video", id: videoId },
+      ],
+    }),
+
+    getUserVideos: builder.query<UserVideo[], number>({
+      query: (userId) => ({
+        url: `/user/videos/${userId}`,
+        method: "GET",
+      }),
+      providesTags: ["Video"],
+    }),
+
     deleteVideo: builder.mutation<
       { message: string },
       { videoId: number; token: string }
@@ -125,7 +147,10 @@ export const apiSlice = createApi({
       query: ({ videoId, token }) => ({
         url: `/video/${videoId}`,
         method: "DELETE",
-        body: { token },
+        body: new URLSearchParams({ token }),
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
       }),
       invalidatesTags: ["Video"],
     }),
@@ -141,9 +166,15 @@ export const apiSlice = createApi({
       query: ({ videoId, token }) => ({
         url: `/like/${videoId}`,
         method: "POST",
-        body: { token },
+        body: new URLSearchParams({ token }),
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
       }),
-      invalidatesTags: ["Like"],
+      // refetch video metadata after like
+      invalidatesTags: (result, error, { videoId }) => [
+        { type: "Video", id: videoId },
+      ],
     }),
 
     checkLiked: builder.query<
@@ -162,10 +193,14 @@ export const apiSlice = createApi({
     // COMMENT ENDPOINTS
     // ======================================================
 
-    getComments: builder.query<Comment[], number>({
-      query: (videoId) => ({
+    getComments: builder.query<
+      CommentsResponse,
+      { videoId: number; page?: number; limit?: number }
+    >({
+      query: ({ videoId, page = 1, limit = 10 }) => ({
         url: `/comments/${videoId}`,
         method: "GET",
+        params: { page, limit },
       }),
       providesTags: ["Comment"],
     }),
@@ -180,7 +215,25 @@ export const apiSlice = createApi({
       query: ({ videoId, content, token }) => ({
         url: `/comment/${videoId}`,
         method: "POST",
-        body: { content, token },
+        body: new URLSearchParams({ content, token }),
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      }),
+      invalidatesTags: ["Comment"],
+    }),
+
+    editComment: builder.mutation<
+      CommentEditResponse,
+      { commentId: number; content: string; token: string }
+    >({
+      query: ({ commentId, content, token }) => ({
+        url: `/comment/${commentId}`,
+        method: "PUT",
+        body: new URLSearchParams({ content, token }),
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
       }),
       invalidatesTags: ["Comment"],
     }),
@@ -192,7 +245,10 @@ export const apiSlice = createApi({
       query: ({ commentId, token }) => ({
         url: `/comment/${commentId}`,
         method: "DELETE",
-        body: { token },
+        body: new URLSearchParams({ token }),
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
       }),
       invalidatesTags: ["Comment"],
     }),
@@ -208,6 +264,8 @@ export const {
   useGetVideosQuery,
   useUploadVideoMutation,
   useStreamVideoQuery,
+  useGetVideoMetadataQuery,
+  useGetUserVideosQuery,
   useDeleteVideoMutation,
 
   // Likes
@@ -217,5 +275,6 @@ export const {
   // Comments
   useGetCommentsQuery,
   useAddCommentMutation,
+  useEditCommentMutation,
   useDeleteCommentMutation,
 } = apiSlice;

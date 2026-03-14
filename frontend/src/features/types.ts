@@ -48,6 +48,26 @@ export interface VideoDetail extends Video {
   uploader_id?: number;
 }
 
+export interface VideoMetadata {
+  id: number;
+  title: string;
+  description: string;
+  thumbnail: string;
+  likes: number;
+  comments_count: number;
+  uploader: {
+    id: number;
+    name: string;
+  };
+}
+
+export interface UserVideo {
+  id: number;
+  title: string;
+  thumbnail: string;
+  likes: number;
+}
+
 export interface VideoUploadRequest {
   title: string;
   description: string;
@@ -64,6 +84,21 @@ export interface Comment {
   content: string;
   timestamp: string;
   video_id?: number;
+}
+
+export interface CommentEditResponse {
+  message: string;
+  comment: {
+    id: number;
+    content: string;
+    timestamp: string;
+  };
+}
+
+export interface CommentsResponse {
+  comments: Comment[];
+  page: number;
+  total: number;
 }
 
 export interface CommentCreateRequest {

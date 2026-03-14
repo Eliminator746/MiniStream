@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Form, File, UploadFile, Depends, HTTPException
+from fastapi import FastAPI, Form, File, UploadFile, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, ForeignKey
@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from pathlib import Path
 import subprocess
 from fastapi.staticfiles import StaticFiles
+import random
+
 
 
 
@@ -31,6 +33,13 @@ class User(Base):
     name = Column(String(100), nullable=False)
     email = Column(String(120), unique=True, index=True, nullable=False)
     password = Column(String(255), nullable=False)
+
+    profile_image = Column(String(255), nullable=True)
+    cover_image = Column(String(255), nullable=True)
+
+    about = Column(Text, nullable=True)
+    subscribers = Column(Integer, default=lambda: random.randint(50, 10000))
+
     videos = relationship("Video", back_populates="uploader")
 
 class Video(Base):
@@ -241,6 +250,131 @@ async def stream_video(
     
     return FileResponse(file_path, media_type="video/mp4")
 
+# Give video metadata
+@app.get("/video/metadata/{video_id}")
+async def get_video_details(
+    video_id: int,
+    db: Session = Depends(get_db)
+):
+    video = db.query(Video).filter(Video.id == video_id).first()
+
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    comments_count = db.query(Comment).filter(Comment.video_id == video_id).count()
+
+    return {
+        "id": video.id,
+        "title": video.title,
+        "description": video.description,
+        "thumbnail": video.thumbnail,
+        "likes": video.likes,
+        "comments_count": comments_count,
+        "uploader": {
+            "id": video.uploader.id,
+            "name": video.uploader.name
+        }
+    }
+
+
+# User's uploaded videos API (for profile page)
+@app.get("/user/videos/{user_id}")
+async def get_user_videos(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    videos = db.query(Video).filter(Video.uploader_id == user_id).all()
+
+    return [
+        {
+            "id": video.id,
+            "title": video.title,
+            "thumbnail": video.thumbnail,
+            "likes": video.likes
+        }
+        for video in videos
+    ]
+    
+# Get metadata for userprofile
+@app.get("/profile/{user_id}")
+def get_profile(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    return {
+        "id": user.id,
+        "username": user.name,
+        "about": user.about,
+        "profile_image": user.profile_image,
+        "cover_image": user.cover_image,
+        "subscribers": user.subscribers
+    }
+
+
+# Update profile for userprofile
+@app.put("/profile")
+def update_profile(
+    token: str = Form(...),
+    username: str = Form(...),
+    about: str = Form(""),
+    db: Session = Depends(get_db)
+):
+    user = get_user_by_token(token, db)
+
+    user.name = username
+    user.about = about
+
+    db.commit()
+
+    return {"message": "Profile updated"}
+
+# Update profile image for userprofile
+@app.post("/profile/image")
+async def upload_profile_image(
+    token: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    user = get_user_by_token(token, db)
+
+    ext = os.path.splitext(file.filename)[1]
+    filename = f"{uuid.uuid4()}{ext}"
+
+    path = f"./profile_images/{filename}"
+
+    with open(path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    user.profile_image = filename
+    db.commit()
+
+    return {"message": "Profile image updated"}
+
+
+# Update cover image for userprofile
+@app.post("/profile/cover")
+async def upload_cover_image(
+    token: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    user = get_user_by_token(token, db)
+
+    ext = os.path.splitext(file.filename)[1]
+    filename = f"{uuid.uuid4()}{ext}"
+
+    path = f"./cover_images/{filename}"
+
+    with open(path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    user.cover_image = filename
+    db.commit()
+
+    return {"message": "Cover image updated"}
+
 
 # Likes the video if not liked by this user else unlikes it
 @app.post("/like/{video_id}")
@@ -289,7 +423,7 @@ async def like_video(
 @app.get("/liked/{video_id}")
 async def liked_video(
     video_id: int,
-    token: str = Form(...),
+    token: str = Query(...),
     db: Session = Depends(get_db)
 ):
     user = get_user_by_token(token, db)
@@ -311,19 +445,37 @@ async def liked_video(
 @app.get("/comments/{video_id}")
 async def get_comments(
     video_id: int,
+    page: int = 1,
+    limit: int = 10,
     db: Session = Depends(get_db)
 ):
-    comments = db.query(Comment).filter(Comment.video_id == video_id).all()
+    offset = (page - 1) * limit
 
-    return [
-        {
-            "id": comment.id,
-            "user": comment.user.name,
-            "content": comment.content,
-            "timestamp": comment.timestamp
-        }
-        for comment in comments
-    ]
+    comments = (
+        db.query(Comment)
+        .filter(Comment.video_id == video_id)
+        .order_by(Comment.timestamp.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    total = db.query(Comment).filter(Comment.video_id == video_id).count()
+
+    return {
+        "comments": [
+            {
+                "id": comment.id,
+                "user": comment.user.name,
+                "content": comment.content,
+                "timestamp": comment.timestamp
+            }
+            for comment in comments
+        ],
+        "page": page,
+        "total": total
+    }
+
 
 # Add comment by this user
 @app.post("/comment/{video_id}")
@@ -365,6 +517,38 @@ async def add_comment(
     }
 
 
+#Edit comment by the owner
+@app.put("/comment/{comment_id}")
+async def edit_comment(
+    comment_id: int,
+    content: str = Form(...),
+    token: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    user = get_user_by_token(token, db)
+
+    comment = db.query(Comment).filter(Comment.id == comment_id).first()
+
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    if comment.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    comment.content = content
+    db.commit()
+    db.refresh(comment)
+
+    return {
+        "message": "Comment updated",
+        "comment": {
+            "id": comment.id,
+            "content": comment.content,
+            "timestamp": comment.timestamp
+        }
+    }
+    
+    
 # Delete comment by the owner
 @app.delete("/comment/{comment_id}")
 async def delete_comment(
