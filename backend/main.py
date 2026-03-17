@@ -1,84 +1,145 @@
-from fastapi import FastAPI, Form, File, UploadFile, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, ForeignKey
-from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship
-from werkzeug.security import generate_password_hash, check_password_hash
-import os, shutil, datetime, uuid
-from dotenv import load_dotenv
 from pathlib import Path
+import tempfile
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, Form, File, UploadFile, Depends, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
+
+
+from auth import router as auth_router
+from auth import get_current_user
+
+from models import User, Video, Comment, Like
+from database import engine
+from sqlalchemy.orm import Session
+from database import Base, engine, get_db
+
+import os, uuid, hashlib
 import subprocess
-from fastapi.staticfiles import StaticFiles
-import random
+import boto3
+from loguru import logger
+import magic
 
 
-
-
+logger.info("Imports working correctly")
 load_dotenv(Path(__file__).parent.parent / ".env")
-DATABASE_URL = os.getenv("DATABASE_URL")
-THUMBNAIL_DIR = os.getenv("THUMBNAIL_DIR")
-
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
-Base = declarative_base()
-
-# Set upload directory relative to backend folder
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)
-    email = Column(String(120), unique=True, index=True, nullable=False)
-    password = Column(String(255), nullable=False)
-
-    profile_image = Column(String(255), nullable=True)
-    cover_image = Column(String(255), nullable=True)
-
-    about = Column(Text, nullable=True)
-    subscribers = Column(Integer, default=lambda: random.randint(50, 10000))
-
-    videos = relationship("Video", back_populates="uploader")
-
-class Video(Base):
-    __tablename__ = "videos"
-
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(200), nullable=False)
-    description = Column(Text, nullable=True)
-    filename = Column(String(255), nullable=False)
-    thumbnail = Column(String)
-    likes = Column(Integer, default=0)
-
-    uploader_id = Column(Integer, ForeignKey("users.id"))
-    uploader = relationship("User", back_populates="videos")
-    
-class Like(Base):
-    __tablename__ = "likes"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    video_id = Column(Integer, ForeignKey("videos.id"))
 
 
-class Comment(Base):
-    __tablename__ = "comments"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    video_id = Column(Integer, ForeignKey("videos.id"))
+AWS_BUCKET = 'ministream-bucket'
+VIDEO_PREFIX = "videos/"
+THUMBNAIL_PREFIX = "thumbnails/"
 
-    content = Column(Text, nullable=False)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+s3_client = boto3.client(
+    "s3",
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    region_name=os.getenv("AWS_DEFAULT_REGION")
+)
 
-    user = relationship("User")
-    # video = relationship("Video")
+KB = 1024
+MB = 1024 * KB
+
+SUPPORTED_VIDEO_TYPES = {
+    "video/mp4": "mp4"
+}
+
+SUPPORTED_IMAGE_TYPES = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp"
+}
+MAX_IMAGE_SIZE = 5 * MB
+
+TEMP_DIR = "temp"
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+
+# ----------------------------
+# S3 Upload Helper
+# ----------------------------
+
+async def s3_upload(contents: bytes, key: str, content_type: str):
+    logger.info(f"Uploading {key} to S3")
+
+    s3_client.put_object(
+        Bucket=AWS_BUCKET,
+        Key=key,
+        Body=contents,
+        ContentType=content_type
+    )
+
+# ----------------------------
+# Image Upload Helper
+# ----------------------------
+
+def upload_user_image(contents: bytes, folder: str) -> str:
+    if len(contents) > MAX_IMAGE_SIZE:
+        raise HTTPException(status_code=400, detail="Image must be under 5 MB")
+
+    mime = magic.from_buffer(contents, mime=True)
+    if mime not in SUPPORTED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported image type: {mime}")
+
+    ext = SUPPORTED_IMAGE_TYPES[mime]
+    key = f"{folder}/{uuid.uuid4()}.{ext}"
+
+    s3_client.put_object(Bucket=AWS_BUCKET, Key=key, Body=contents, ContentType=mime)
+    return key
+
+
+# ----------------------------
+# S3 ETag (MD5) Fetcher
+# ----------------------------
+
+def get_s3_hash(key: str) -> str | None:
+    try:
+        head = s3_client.head_object(Bucket=AWS_BUCKET, Key=key)
+        return head["ETag"].strip('"')
+    except Exception:
+        return None
+
+
+
+# ----------------------------
+# Thumbnail Generator
+# ----------------------------
+
+def generate_thumbnail(video_path: str, thumbnail_path: str):
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-i", video_path,
+            "-ss", "00:00:01",
+            "-vframes", "1",
+            "-y",
+            thumbnail_path
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=True
+    )
+
+
+def generate_presigned_url(key: str):
+    return s3_client.generate_presigned_url(
+        "get_object",
+        Params={
+            "Bucket": AWS_BUCKET,
+            "Key": key
+        },
+        ExpiresIn=3600
+    )
+
 
 Base.metadata.create_all(bind=engine)
 
+# ----------------------------
+# App & Middleware
+# ----------------------------
 app = FastAPI()
+app.include_router(auth_router)
+
 
 app.add_middleware(
     CORSMiddleware, 
@@ -88,116 +149,91 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def generate_thumbnail(video_path: str, thumbnail_path: str):
-    os.makedirs("thumbnails", exist_ok=True)
-    subprocess.run([
-        "ffmpeg",
-        "-i", video_path,
-        "-ss", "00:00:01",
-        "-vframes", "1",
-        thumbnail_path
-    ],check=True)
+      
 
-
-app.mount("/thumbnails", StaticFiles(directory="thumbnails"), name="thumbnails")
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-        
-def get_user_by_token(token: str, db: Session):
-    user = db.query(User).filter(User.name == token.split('_')[0]).first()
-
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    return user
-
-@app.post("/register")
-async def register_user(
-    name: str = Form(...),
-    email: str = Form(...),
-    password: str = Form(...),
-    db: Session = Depends(get_db)
-):
-    # check if email already exists
-    existing_user = db.query(User).filter(User.email == email).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    # hash password
-    hashed_password = generate_password_hash(password)
-
-    # create user object
-    new_user = User(
-        name=name,
-        email=email,
-        password=hashed_password,
-    )
-
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-
-    return {
-        "message": "User registered successfully",
-        "user_id": new_user.id
-    }
-
-@app.post("/login")
-async def login_user(
-    email: str = Form(...),
-    password: str = Form(...),
-    db: Session = Depends(get_db)
-):
-    user = db.query(User).filter(User.email == email).first()
-    
-    if not user or not check_password_hash(user.password, password):
-        raise HTTPException(status_code=400, detail="Invalid email or password")
-
-    user.token = f"{user.name}_{uuid.uuid4()}"
-
-    return {
-        "message": "User logged in successfully",
-        "user": user.name,
-        "token": user.token
-    }
 
 @app.post("/upload")
 async def upload_video(
     title: str = Form(...),
     description: str = Form(...),
     file: UploadFile = File(...),
-    token: str = Form(...),
+    user: User = Depends(get_current_user),   # ✅ JWT user
     db: Session = Depends(get_db)
 ):
-    # get user from token
-    user = get_user_by_token(token, db)
 
-    # generate unique filename
-    unique_name = f"{uuid.uuid4()}.{file.filename.split('.')[-1]}"
-    file_path = os.path.join(UPLOAD_DIR, unique_name)
+    contents = await file.read()
+    size = len(contents)
 
-    # save file
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    if not 0 < size <= 200 * MB:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Supported file size is 0 - 200 MB"
+        )
+
+    file_type = magic.from_buffer(contents, mime=True)
+
+    if file_type not in SUPPORTED_VIDEO_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file type: {file_type}"
+        )
+
+    video_id = str(uuid.uuid4())
+    video_ext = SUPPORTED_VIDEO_TYPES[file_type]
+
+    video_key = f"{VIDEO_PREFIX}{video_id}.{video_ext}"
+    temp_video_path = f"{TEMP_DIR}/{video_id}.{video_ext}"
+    thumbnail_name = f"{video_id}.jpg"
+    # with this — works on both Windows and Linux
+    temp_thumbnail_path = os.path.join(tempfile.gettempdir(), thumbnail_name)
+    thumbnail_key = f"{THUMBNAIL_PREFIX}{thumbnail_name}"
+
+    try:
+        # Save temp video locally (needed for ffmpeg)
+        with open(temp_video_path, "wb") as f:
+            f.write(contents)
+
+        # ----------------------------
+        # Generate Thumbnail
+        # ----------------------------
+
+        generate_thumbnail(temp_video_path, temp_thumbnail_path)
+        
+        # ----------------------------
+        # Upload Video to S3
+        # ----------------------------
+
+        await s3_upload(contents, video_key, file_type)
+
+        # ----------------------------
+        # Upload Thumbnail to S3
+        # ----------------------------
+
+        with open(temp_thumbnail_path, "rb") as f:
+            thumbnail_bytes = f.read()
+
+        await s3_upload(thumbnail_bytes, thumbnail_key, "image/jpeg")
     
-    # generate thumbnail filename
-    thumbnail_name = f"{uuid.uuid4()}.jpg"
-    thumbnail_path = os.path.join(THUMBNAIL_DIR, thumbnail_name)
+    finally:
+        # ----------------------------
+        # Remove temp files - Always runs — even if an exception occurred above
+        # ----------------------------
 
-    # generate thumbnail
-    generate_thumbnail(file_path, thumbnail_path)
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
 
-    # create video record
+        if os.path.exists(temp_thumbnail_path):
+            os.remove(temp_thumbnail_path)
+
+    # ----------------------------
+    # Save DB record
+    # ----------------------------
+
     new_video = Video(
         title=title,
         description=description,
-        filename=unique_name,
-        thumbnail=thumbnail_name,
+        video_key=video_key,
+        thumbnail_key=thumbnail_key,
         uploader_id=user.id
     )
 
@@ -208,25 +244,22 @@ async def upload_video(
     return {
         "message": "Video uploaded successfully",
         "video_id": new_video.id,
-        "filename": unique_name,
-        "thumbnail": thumbnail_name
-        
+        "video_key": video_key,
+        "thumbnail_key": thumbnail_key
     }
     
 @app.get("/videos")
 async def get_videos(
     db: Session = Depends(get_db)
 ):
-    videos = db.query(Video).all()
-    
-    # list comprehension below I've wrote
+    videos = db.query(Video).limit(15).all()
+
     return [
         {
             "id": video.id,
             "title": video.title,
             "description": video.description,
-            "filename": video.filename,
-            "thumbnail": video.thumbnail,
+            "thumbnail": generate_presigned_url(video.thumbnail_key),
             "likes": video.likes,
             "uploader": video.uploader.name
         }
@@ -235,22 +268,9 @@ async def get_videos(
 # Why video is not returned here?
 # Bec it'll contain data about video and not video, once user clicks on video (i.e page), then it will be redirected and video will play
 
-# Returns the full video file
-@app.get("/video/{video_id}")
-async def stream_video(
-    video_id: int,
-    db: Session = Depends(get_db)
-):
-    video = db.query(Video).filter(Video.id == video_id).first()
-
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
-
-    file_path = os.path.join(UPLOAD_DIR, video.filename)
-    
-    return FileResponse(file_path, media_type="video/mp4")
 
 # Give video metadata
+# moved ABOVE /video/{video_id} to prevent route conflict
 @app.get("/video/metadata/{video_id}")
 async def get_video_details(
     video_id: int,
@@ -267,7 +287,7 @@ async def get_video_details(
         "id": video.id,
         "title": video.title,
         "description": video.description,
-        "thumbnail": video.thumbnail,
+        "thumbnail": generate_presigned_url(video.thumbnail_key),
         "likes": video.likes,
         "comments_count": comments_count,
         "uploader": {
@@ -275,6 +295,22 @@ async def get_video_details(
             "name": video.uploader.name
         }
     }
+    
+    
+# Returns the full video file
+@app.get("/video/{video_id}")
+async def stream_video(
+    video_id: int,
+    db: Session = Depends(get_db)
+):
+
+    video = db.query(Video).filter(Video.id == video_id).first()
+
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    return {"video_url": generate_presigned_url(video.video_key)}
+
 
 
 # User's uploaded videos API (for profile page)
@@ -283,109 +319,122 @@ async def get_user_videos(
     user_id: int,
     db: Session = Depends(get_db)
 ):
+
     videos = db.query(Video).filter(Video.uploader_id == user_id).all()
 
     return [
         {
             "id": video.id,
             "title": video.title,
-            "thumbnail": video.thumbnail,
+            "thumbnail": generate_presigned_url(video.thumbnail_key),
             "likes": video.likes
         }
         for video in videos
     ]
+
     
 # Get metadata for userprofile
 @app.get("/profile/{user_id}")
 def get_profile(user_id: int, db: Session = Depends(get_db)):
+
     user = db.query(User).filter(User.id == user_id).first()
 
     if not user:
-        raise HTTPException(404, "User not found")
+        raise HTTPException(status_code=404, detail="User not found")
+
+    profile_image_url = (
+        generate_presigned_url(user.profile_image)
+        if user.profile_image else None
+    )
+
+    cover_image_url = (
+        generate_presigned_url(user.cover_image)
+        if user.cover_image else None
+    )
 
     return {
         "id": user.id,
         "username": user.name,
         "about": user.about,
-        "profile_image": user.profile_image,
-        "cover_image": user.cover_image,
+        "profile_image": profile_image_url,
+        "cover_image": cover_image_url,
         "subscribers": user.subscribers
     }
-
 
 # Update profile for userprofile
 @app.put("/profile")
 def update_profile(
-    token: str = Form(...),
+    user: User = Depends(get_current_user),   # ✅ JWT user
     username: str = Form(...),
     about: str = Form(""),
     db: Session = Depends(get_db)
 ):
-    user = get_user_by_token(token, db)
+
 
     user.name = username
     user.about = about
 
     db.commit()
+    db.refresh(user)
 
-    return {"message": "Profile updated"}
+    return {
+        "message": "Profile updated",
+        "username": user.name,
+        "about": user.about
+    }
+
 
 # Update profile image for userprofile
 @app.post("/profile/image")
 async def upload_profile_image(
-    token: str = Form(...),
+    user: User = Depends(get_current_user),
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    user = get_user_by_token(token, db)
+    contents = await file.read()
+    new_hash = hashlib.md5(contents).hexdigest()
 
-    ext = os.path.splitext(file.filename)[1]
-    filename = f"{uuid.uuid4()}{ext}"
+    # prevent uploading same image that's already set as profile
+    if user.profile_image and get_s3_hash(user.profile_image) == new_hash:
+        raise HTTPException(status_code=400, detail="This image is already your profile picture")
 
-    path = f"./profile_images/{filename}"
+    if user.profile_image:
+        s3_client.delete_object(Bucket=AWS_BUCKET, Key=user.profile_image)
 
-    with open(path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    user.profile_image = filename
+    key = upload_user_image(contents, "profile-images")
+    user.profile_image = key
     db.commit()
-
-    return {"message": "Profile image updated"}
-
+    return {"message": "Profile image updated", "profile_image": key}
 
 # Update cover image for userprofile
 @app.post("/profile/cover")
 async def upload_cover_image(
-    token: str = Form(...),
+    user: User = Depends(get_current_user),
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    user = get_user_by_token(token, db)
+    contents = await file.read()
+    new_hash = hashlib.md5(contents).hexdigest()
 
-    ext = os.path.splitext(file.filename)[1]
-    filename = f"{uuid.uuid4()}{ext}"
+    # prevent uploading same image that's already set as cover
+    if user.cover_image and get_s3_hash(user.cover_image) == new_hash:
+        raise HTTPException(status_code=400, detail="This image is already your cover picture")
 
-    path = f"./cover_images/{filename}"
+    if user.cover_image:
+        s3_client.delete_object(Bucket=AWS_BUCKET, Key=user.cover_image)
 
-    with open(path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    user.cover_image = filename
+    key = upload_user_image(contents, "cover-images")
+    user.cover_image = key
     db.commit()
-
-    return {"message": "Cover image updated"}
-
+    return {"message": "Cover image updated", "cover_image": key}
 
 # Likes the video if not liked by this user else unlikes it
 @app.post("/like/{video_id}")
 async def like_video(
     video_id: int,
-    token: str = Form(...),
+    user: User = Depends(get_current_user),   # ✅ JWT user
     db: Session = Depends(get_db)
 ):
-    user = get_user_by_token(token, db)
-    if not user:
-        raise HTTPException(status_code=404, detail="Invalid Token")
     
     video = db.query(Video).filter(Video.id == video_id).first()
     if not video:
@@ -423,10 +472,9 @@ async def like_video(
 @app.get("/liked/{video_id}")
 async def liked_video(
     video_id: int,
-    token: str = Query(...),
+    user: User = Depends(get_current_user),   # ✅ JWT user
     db: Session = Depends(get_db)
 ):
-    user = get_user_by_token(token, db)
 
     video = db.query(Video).filter(Video.id == video_id).first()
     if not video:
@@ -481,16 +529,10 @@ async def get_comments(
 @app.post("/comment/{video_id}")
 async def add_comment(
     video_id: int,
-    content: str = Form(...),
-    token: str = Form(...),
+    content: str = Form(..., min_length=1),   # validation replaces manual if-not check
+    user: User = Depends(get_current_user),   # ✅ JWT user
     db: Session = Depends(get_db)
 ):
-    user = get_user_by_token(token, db)
-    if not user:
-        raise HTTPException(status_code=404, detail="Invalid Token")
-    
-    if not content:
-        raise HTTPException(status_code=404, detail="Comment cannot be empty")
 
     video = db.query(Video).filter(Video.id == video_id).first()
     if not video:
@@ -521,11 +563,10 @@ async def add_comment(
 @app.put("/comment/{comment_id}")
 async def edit_comment(
     comment_id: int,
-    content: str = Form(...),
-    token: str = Form(...),
+    content: str = Form(..., min_length=1),
+    user: User = Depends(get_current_user),   # ✅ JWT user
     db: Session = Depends(get_db)
 ):
-    user = get_user_by_token(token, db)
 
     comment = db.query(Comment).filter(Comment.id == comment_id).first()
 
@@ -553,10 +594,9 @@ async def edit_comment(
 @app.delete("/comment/{comment_id}")
 async def delete_comment(
     comment_id: int,
-    token: str = Form(...),
+    user: User = Depends(get_current_user),   # ✅ JWT user
     db: Session = Depends(get_db)
 ):
-    user = get_user_by_token(token, db)
 
     comment = db.query(Comment).filter(Comment.id == comment_id).first()
     if not comment:
@@ -574,28 +614,29 @@ async def delete_comment(
 @app.delete("/video/{video_id}")
 async def delete_video(
     video_id: int,
-    token: str = Form(...),
+    user: User = Depends(get_current_user),   # ✅ JWT user
     db: Session = Depends(get_db)
 ):
-    user = get_user_by_token(token, db)
 
     video = db.query(Video).filter(Video.id == video_id).first()
+
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
     # Only uploader can delete
     if video.uploader_id != user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this video")
+        raise HTTPException(
+            status_code=403,
+            detail="Not authorized to delete this video"
+        )
 
-    # delete video file from uploads
-    file_path = os.path.join(UPLOAD_DIR, video.filename)
     try:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-    except FileNotFoundError:
-        pass
-    
-    # delete record from DB
+        s3_client.delete_object(Bucket=AWS_BUCKET, Key=video.video_key)
+        s3_client.delete_object(Bucket=AWS_BUCKET, Key=video.thumbnail_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting file from S3: {str(e)}")
+
+    # delete DB record
     db.delete(video)
     db.commit()
 
