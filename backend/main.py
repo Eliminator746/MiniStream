@@ -4,6 +4,8 @@ import tempfile
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, File, UploadFile, Depends, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 
 from auth import router as auth_router
@@ -52,7 +54,7 @@ SUPPORTED_IMAGE_TYPES = {
 }
 MAX_IMAGE_SIZE = 5 * MB
 
-TEMP_DIR = "temp"
+TEMP_DIR = str(Path(__file__).parent / "temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 
@@ -659,3 +661,22 @@ async def delete_video(
     db.commit()
 
     return {"message": "Video deleted successfully"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Serve React SPA — MUST be LAST so API routes are matched first
+# ─────────────────────────────────────────────────────────────────────────────
+
+DIST_DIR = Path(__file__).parent.parent / "frontend" / "dist"
+
+if DIST_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=str(DIST_DIR / "assets")), name="assets")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_spa(full_path: str):
+    """Return index.html for all non-API routes so React Router works."""
+    index = DIST_DIR / "index.html"
+    if index.exists():
+        return FileResponse(str(index))
+    return {"detail": "Frontend not built. Run: cd frontend && npm run build"}

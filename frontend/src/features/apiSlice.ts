@@ -18,7 +18,7 @@ import type {
 } from "./types";
 import type { RootState } from "@/store/store";
 
-const BASE_URL = "http://localhost:8000";
+const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
 const baseQuery = fetchBaseQuery({
   baseUrl: BASE_URL,
