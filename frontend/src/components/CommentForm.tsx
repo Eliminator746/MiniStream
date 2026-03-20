@@ -4,72 +4,65 @@ import { useAppSelector } from "@/store/hooks";
 
 interface CommentFormProps {
   videoId: number;
-  onCommentAdded?: () => void;
 }
 
-const CommentForm: React.FC<CommentFormProps> = ({
-  videoId,
-  onCommentAdded,
-}) => {
+const CommentForm: React.FC<CommentFormProps> = ({ videoId }) => {
   const [content, setContent] = useState("");
   const [addComment, { isLoading }] = useAddCommentMutation();
-  const token = useAppSelector((state) => state.auth.token);
+  const isAuthenticated = useAppSelector((state) => state.auth.isAuthenticated);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!content.trim() || !token) return;
+    if (!content.trim()) return;
 
     try {
       await addComment({
         videoId,
         content: content.trim(),
-        token,
       }).unwrap();
 
       setContent("");
-      onCommentAdded?.();
     } catch (error) {
       console.error("Failed to add comment:", error);
     }
   };
 
-  if (!token) {
+  if (!isAuthenticated) {
     return (
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center text-sm text-blue-700">
+      <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-center text-sm text-slate-500">
         Please log in to comment
       </div>
     );
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="bg-white rounded-lg p-4 shadow mb-4"
-    >
+    <form onSubmit={handleSubmit}>
       <textarea
         value={content}
         onChange={(e) => setContent(e.target.value)}
         placeholder="Add a comment..."
-        rows={3}
-        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+        rows={2}
+        className="w-full px-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-teal-400 resize-none transition"
       />
 
-      <div className="flex justify-end gap-2 mt-3">
-        <button
-          type="button"
-          onClick={() => setContent("")}
-          className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition"
-        >
-          Cancel
-        </button>
+      <div className="flex justify-end gap-2 mt-2">
+        {content.trim() && (
+          <button
+            type="button"
+            onClick={() => setContent("")}
+            className="px-4 py-1.5 text-sm text-slate-500 hover:bg-slate-100 rounded-lg transition"
+          >
+            Cancel
+          </button>
+        )}
 
         <button
           type="submit"
           disabled={!content.trim() || isLoading}
-          className="px-4 py-2 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 transition"
+          className="px-4 py-1.5 text-sm bg-teal-500 text-white rounded-lg hover:bg-teal-600 disabled:bg-slate-300 disabled:text-slate-400 transition"
         >
-          {isLoading ? "Posting..." : "Post Comment"}
+          {isLoading ? "Posting..." : "Comment"}
         </button>
       </div>
     </form>

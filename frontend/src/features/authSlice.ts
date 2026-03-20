@@ -1,5 +1,5 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
-import type { AuthState } from "./types";
+import type { AuthState, AuthUser } from "./types";
 
 const initialState: AuthState = {
   user: localStorage.getItem("user")
@@ -15,7 +15,7 @@ const authSlice = createSlice({
   reducers: {
     setCredentials: (
       state,
-      action: PayloadAction<{ user: string; token: string }>,
+      action: PayloadAction<{ user: AuthUser; token: string }>,
     ) => {
       state.user = action.payload.user;
       state.token = action.payload.token;

@@ -2,196 +2,134 @@ import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import type {
   LoginRequest,
   RegisterRequest,
-  AuthResponse,
+  LoginResponse,
+  RegisterResponse,
   Video,
+  VideosResponse,
   Comment,
   LikeResponse,
   LikeCheckResponse,
   VideoMetadata,
   UserVideo,
+  VideoStreamResponse,
   CommentsResponse,
   CommentEditResponse,
+  UserProfile,
 } from "./types";
 import type { RootState } from "@/store/store";
-import { setCredentials, logout as logoutAction } from "./authSlice";
 
 const BASE_URL = "http://localhost:8000";
-
-// Helper: build FormData for file uploads
-const buildFormData = (data: Record<string, any>) => {
-  const formData = new FormData();
-
-  Object.entries(data).forEach(([key, value]) => {
-    if (value === undefined || value === null) return;
-
-    if (value instanceof File) {
-      formData.append(key, value);
-    } else if (typeof value === "object") {
-      formData.append(key, JSON.stringify(value));
-    } else {
-      formData.append(key, String(value));
-    }
-  });
-
-  return formData;
-};
 
 const baseQuery = fetchBaseQuery({
   baseUrl: BASE_URL,
   prepareHeaders: (headers, { getState }) => {
-    const state = getState() as RootState;
-    const token = state.auth.token;
-
-    if (token) {
-      headers.set("Authorization", `Bearer ${token}`);
-    }
-
+    const token = (getState() as RootState).auth.token;
+    if (token) headers.set("Authorization", `Bearer ${token}`);
     return headers;
   },
+});
+
+// Helper to send form-urlencoded data (backend uses Form(...))
+const formBody = (data: Record<string, string>) => ({
+  body: new URLSearchParams(data),
+  headers: { "Content-Type": "application/x-www-form-urlencoded" },
 });
 
 export const apiSlice = createApi({
   reducerPath: "api",
   baseQuery,
-  tagTypes: ["Video", "Comment", "Like"],
+  tagTypes: ["Video", "Comment", "Like", "Profile"],
+
   endpoints: (builder) => ({
-    // ======================================================
-    // AUTH ENDPOINTS
-    // ======================================================
+    // ======================== AUTH ========================
 
-    register: builder.mutation<AuthResponse, RegisterRequest>({
+    register: builder.mutation<RegisterResponse, RegisterRequest>({
       query: (body) => ({
-        url: "/register",
+        url: "/auth/register",
         method: "POST",
-        body,
-      }),
-    }),
-
-    login: builder.mutation<
-      { message: string; user: string; token: string },
-      LoginRequest
-    >({
-      query: (credentials) => ({
-        url: "/login",
-        method: "POST",
-        body: new URLSearchParams({
-          email: credentials.email,
-          password: credentials.password,
+        ...formBody({
+          name: body.name,
+          email: body.email,
+          password: body.password,
         }),
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
       }),
     }),
 
-    // ======================================================
-    // VIDEO ENDPOINTS
-    // ======================================================
-
-    getVideos: builder.query<Video[], void>({
-      query: () => ({
-        url: "/videos",
-        method: "GET",
+    login: builder.mutation<LoginResponse, LoginRequest>({
+      query: (creds) => ({
+        url: "/auth/login",
+        method: "POST",
+        ...formBody({ email: creds.email, password: creds.password }),
       }),
-      providesTags: ["Video"],
+    }),
+
+    // ======================== VIDEOS ========================
+
+    getVideos: builder.query<VideosResponse, { page?: number; limit?: number }>(
+      {
+        query: ({ page = 1, limit = 12 }) => ({
+          url: "/videos",
+          params: { page, limit },
+        }),
+        providesTags: ["Video"],
+      },
+    ),
+
+    getVideoMetadata: builder.query<VideoMetadata, number>({
+      query: (videoId) => `/video/metadata/${videoId}`,
+      providesTags: (_r, _e, id) => [{ type: "Video", id }],
+    }),
+
+    streamVideo: builder.query<VideoStreamResponse, number>({
+      query: (videoId) => `/video/${videoId}`,
     }),
 
     uploadVideo: builder.mutation<
-      { message: string; video_id: number; filename: string },
-      { title: string; description: string; file: File; token: string }
+      {
+        message: string;
+        video_id: number;
+        video_key: string;
+        thumbnail_key: string;
+      },
+      { title: string; description: string; file: File }
     >({
-      query: ({ title, description, file, token }) =>
-        ({
-          url: "/upload",
-          method: "POST",
-          body: buildFormData({
-            title,
-            description,
-            file,
-            token,
-          }),
-        }) as any,
+      query: ({ title, description, file }) => {
+        const formData = new FormData();
+        formData.append("title", title);
+        formData.append("description", description);
+        formData.append("file", file);
+        return { url: "/upload", method: "POST", body: formData };
+      },
       invalidatesTags: ["Video"],
-    }),
-
-    streamVideo: builder.query<Blob, number>({
-      query: (videoId) => ({
-        url: `/video/${videoId}`,
-        method: "GET",
-        responseHandler: (response) => response.blob(),
-      }),
-    }),
-
-    getVideoMetadata: builder.query<VideoMetadata, number>({
-      query: (videoId) => ({
-        url: `/video/metadata/${videoId}`,
-        method: "GET",
-      }),
-      providesTags: (result, error, videoId) => [
-        { type: "Video", id: videoId },
-      ],
     }),
 
     getUserVideos: builder.query<UserVideo[], number>({
-      query: (userId) => ({
-        url: `/user/videos/${userId}`,
-        method: "GET",
-      }),
+      query: (userId) => `/user/videos/${userId}`,
       providesTags: ["Video"],
     }),
 
-    deleteVideo: builder.mutation<
-      { message: string },
-      { videoId: number; token: string }
-    >({
-      query: ({ videoId, token }) => ({
-        url: `/video/${videoId}`,
-        method: "DELETE",
-        body: new URLSearchParams({ token }),
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-      }),
+    deleteVideo: builder.mutation<{ message: string }, number>({
+      query: (videoId) => ({ url: `/video/${videoId}`, method: "DELETE" }),
       invalidatesTags: ["Video"],
     }),
 
-    // ======================================================
-    // LIKE ENDPOINTS
-    // ======================================================
+    // ======================== LIKES ========================
 
-    likeVideo: builder.mutation<
-      LikeResponse,
-      { videoId: number; token: string }
-    >({
-      query: ({ videoId, token }) => ({
-        url: `/like/${videoId}`,
-        method: "POST",
-        body: new URLSearchParams({ token }),
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-      }),
-      // refetch video metadata after like
-      invalidatesTags: (result, error, { videoId }) => [
+    likeVideo: builder.mutation<LikeResponse, number>({
+      query: (videoId) => ({ url: `/like/${videoId}`, method: "POST" }),
+      // After like/unlike, re-fetch like status + video metadata (for count)
+      invalidatesTags: (_r, _e, videoId) => [
+        { type: "Like", id: videoId },
         { type: "Video", id: videoId },
       ],
     }),
 
-    checkLiked: builder.query<
-      LikeCheckResponse,
-      { videoId: number; token: string }
-    >({
-      query: ({ videoId, token }) => ({
-        url: `/liked/${videoId}`,
-        method: "GET",
-        params: { token },
-      }),
-      providesTags: ["Like"],
+    checkLiked: builder.query<LikeCheckResponse, number>({
+      query: (videoId) => `/liked/${videoId}`,
+      providesTags: (_r, _e, videoId) => [{ type: "Like", id: videoId }],
     }),
 
-    // ======================================================
-    // COMMENT ENDPOINTS
-    // ======================================================
+    // ======================== COMMENTS ========================
 
     getComments: builder.query<
       CommentsResponse,
@@ -199,82 +137,115 @@ export const apiSlice = createApi({
     >({
       query: ({ videoId, page = 1, limit = 10 }) => ({
         url: `/comments/${videoId}`,
-        method: "GET",
         params: { page, limit },
       }),
       providesTags: ["Comment"],
     }),
 
     addComment: builder.mutation<
-      {
-        message: string;
-        comment: Comment;
-      },
-      { videoId: number; content: string; token: string }
+      { message: string; comment: Comment },
+      { videoId: number; content: string }
     >({
-      query: ({ videoId, content, token }) => ({
+      query: ({ videoId, content }) => ({
         url: `/comment/${videoId}`,
         method: "POST",
-        body: new URLSearchParams({ content, token }),
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
+        ...formBody({ content }),
       }),
-      invalidatesTags: ["Comment"],
+      // Re-fetch comments + video metadata (for comment count)
+      invalidatesTags: (_r, _e, { videoId }) => [
+        "Comment",
+        { type: "Video", id: videoId },
+      ],
     }),
 
     editComment: builder.mutation<
       CommentEditResponse,
-      { commentId: number; content: string; token: string }
+      { commentId: number; content: string; videoId: number }
     >({
-      query: ({ commentId, content, token }) => ({
+      query: ({ commentId, content }) => ({
         url: `/comment/${commentId}`,
         method: "PUT",
-        body: new URLSearchParams({ content, token }),
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
+        ...formBody({ content }),
       }),
       invalidatesTags: ["Comment"],
     }),
 
     deleteComment: builder.mutation<
       { message: string },
-      { commentId: number; token: string }
+      { commentId: number; videoId: number }
     >({
-      query: ({ commentId, token }) => ({
+      query: ({ commentId }) => ({
         url: `/comment/${commentId}`,
         method: "DELETE",
-        body: new URLSearchParams({ token }),
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
       }),
-      invalidatesTags: ["Comment"],
+      invalidatesTags: (_r, _e, { videoId }) => [
+        "Comment",
+        { type: "Video", id: videoId },
+      ],
+    }),
+
+    // ======================== PROFILE ========================
+
+    getProfile: builder.query<UserProfile, number>({
+      query: (userId) => `/profile/${userId}`,
+      providesTags: (_r, _e, userId) => [{ type: "Profile", id: userId }],
+    }),
+
+    updateProfile: builder.mutation<
+      { message: string; username: string; about: string },
+      { username: string; about: string }
+    >({
+      query: ({ username, about }) => ({
+        url: "/profile",
+        method: "PUT",
+        ...formBody({ username, about }),
+      }),
+      invalidatesTags: ["Profile"],
+    }),
+
+    uploadProfileImage: builder.mutation<
+      { message: string; profile_image: string },
+      File
+    >({
+      query: (file) => {
+        const fd = new FormData();
+        fd.append("file", file);
+        return { url: "/profile/image", method: "POST", body: fd };
+      },
+      invalidatesTags: ["Profile"],
+    }),
+
+    uploadCoverImage: builder.mutation<
+      { message: string; cover_image: string },
+      File
+    >({
+      query: (file) => {
+        const fd = new FormData();
+        fd.append("file", file);
+        return { url: "/profile/cover", method: "POST", body: fd };
+      },
+      invalidatesTags: ["Profile"],
     }),
   }),
 });
 
 export const {
-  // Auth
   useRegisterMutation,
   useLoginMutation,
-
-  // Videos
   useGetVideosQuery,
   useUploadVideoMutation,
   useStreamVideoQuery,
   useGetVideoMetadataQuery,
   useGetUserVideosQuery,
   useDeleteVideoMutation,
-
-  // Likes
   useLikeVideoMutation,
   useCheckLikedQuery,
-
-  // Comments
   useGetCommentsQuery,
   useAddCommentMutation,
   useEditCommentMutation,
   useDeleteCommentMutation,
+  useGetProfileQuery,
+  useUpdateProfileMutation,
+  useUploadProfileImageMutation,
+  useUploadCoverImageMutation,
 } = apiSlice;

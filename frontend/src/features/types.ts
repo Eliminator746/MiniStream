@@ -7,8 +7,13 @@
 // AUTH TYPES
 // ============================================================================
 
+export interface AuthUser {
+  id: number;
+  name: string;
+}
+
 export interface AuthState {
-  user: string | null;
+  user: AuthUser | null;
   token: string | null;
   isAuthenticated: boolean;
 }
@@ -24,11 +29,14 @@ export interface LoginRequest {
   password: string;
 }
 
-export interface AuthResponse {
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export interface RegisterResponse {
   message: string;
-  user?: string;
-  token?: string;
-  user_id?: number;
+  user_id: number;
 }
 
 // ============================================================================
@@ -39,13 +47,16 @@ export interface Video {
   id: number;
   title: string;
   description: string;
-  filename: string;
+  thumbnail: string;
   likes: number;
   uploader: string;
 }
 
-export interface VideoDetail extends Video {
-  uploader_id?: number;
+export interface VideosResponse {
+  videos: Video[];
+  page: number;
+  total: number;
+  has_more: boolean;
 }
 
 export interface VideoMetadata {
@@ -68,10 +79,8 @@ export interface UserVideo {
   likes: number;
 }
 
-export interface VideoUploadRequest {
-  title: string;
-  description: string;
-  file: File;
+export interface VideoStreamResponse {
+  video_url: string;
 }
 
 // ============================================================================
@@ -83,7 +92,6 @@ export interface Comment {
   user: string;
   content: string;
   timestamp: string;
-  video_id?: number;
 }
 
 export interface CommentEditResponse {
@@ -101,10 +109,6 @@ export interface CommentsResponse {
   total: number;
 }
 
-export interface CommentCreateRequest {
-  content: string;
-}
-
 // ============================================================================
 // LIKE TYPES
 // ============================================================================
@@ -120,11 +124,14 @@ export interface LikeCheckResponse {
 }
 
 // ============================================================================
-// API ERROR TYPES
+// PROFILE TYPES
 // ============================================================================
 
-export interface ApiErrorResponse {
-  detail?: string;
-  message?: string;
-  [key: string]: any;
+export interface UserProfile {
+  id: number;
+  username: string;
+  about: string | null;
+  profile_image: string | null;
+  cover_image: string | null;
+  subscribers: number;
 }

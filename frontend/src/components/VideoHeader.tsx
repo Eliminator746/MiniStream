@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Heart } from "lucide-react";
 import { VideoMetadata } from "@/features/types";
 
@@ -15,21 +16,28 @@ const VideoHeader: React.FC<VideoHeaderProps> = ({
   isLoadingLike,
 }) => {
   return (
-    <>
+    <div className="flex flex-col gap-4">
       {/* Title */}
-      <h1 className="text-2xl font-bold text-gray-900">{video.title}</h1>
+      <h1 className="text-xl font-bold text-slate-900 leading-tight">
+        {video.title}
+      </h1>
 
       {/* Channel + Like */}
-      <div className="flex justify-between items-center bg-white rounded-lg p-4 shadow">
+      <div className="flex justify-between items-center bg-white rounded-xl p-4 border border-slate-100 shadow-sm">
         {/* Uploader */}
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-linear-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold">
+          <div className="w-10 h-10 bg-linear-to-br from-teal-400 to-emerald-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
             {video.uploader.name.charAt(0).toUpperCase()}
           </div>
 
           <div>
-            <p className="font-semibold text-gray-900">{video.uploader.name}</p>
-            <p className="text-xs text-gray-500">Channel Creator</p>
+            <Link
+              to={`/profile/${video.uploader.id}`}
+              className="font-semibold text-sm text-slate-800 cursor-pointer hover:text-teal-600 hover:scale-105 inline-block transition-all duration-150"
+            >
+              {video.uploader.name}
+            </Link>
+            <p className="text-xs text-slate-400">Creator</p>
           </div>
         </div>
 
@@ -37,28 +45,30 @@ const VideoHeader: React.FC<VideoHeaderProps> = ({
         <button
           onClick={onLikeToggle}
           disabled={isLoadingLike}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-100 transition disabled:opacity-50"
+          className="flex items-center gap-2 px-4 py-2 rounded-full hover:bg-slate-50 border border-slate-200 transition disabled:opacity-50"
         >
           <Heart
-            size={24}
+            size={20}
             className={`transition ${
-              liked ? "text-red-500 fill-red-500" : "text-gray-400"
+              liked ? "text-red-500 fill-red-500" : "text-slate-400"
             }`}
           />
-          <span className="font-semibold text-gray-700">{video.likes}</span>
+          <span className="text-sm font-semibold text-slate-700">
+            {video.likes}
+          </span>
         </button>
       </div>
 
       {/* Description */}
-      <div className="bg-white rounded-lg p-4 shadow">
-        <h3 className="font-semibold text-sm text-gray-900 mb-2">
+      <div className="bg-white rounded-xl p-4 border border-slate-100 shadow-sm">
+        <h3 className="font-semibold text-sm text-slate-800 mb-1.5">
           Description
         </h3>
-        <p className="text-sm text-gray-700 leading-relaxed">
+        <p className="text-sm text-slate-600 leading-relaxed">
           {video.description || "No description provided"}
         </p>
       </div>
-    </>
+    </div>
   );
 };
 

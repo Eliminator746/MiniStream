@@ -11,11 +11,12 @@ from auth import get_current_user
 
 from models import User, Video, Comment, Like
 from database import engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from database import Base, engine, get_db
 
-import os, uuid, hashlib
+import os, uuid, hashlib, time
 import subprocess
+from functools import lru_cache
 import boto3
 from loguru import logger
 import magic
@@ -109,27 +110,34 @@ def generate_thumbnail(video_path: str, thumbnail_path: str):
     subprocess.run(
         [
             "ffmpeg",
-            "-i", video_path,
-            "-ss", "00:00:01",
+            "-i", video_path, # input video file
+            "-ss", "00:00:01", # 1sec frame it took
             "-vframes", "1",
             "-y",
-            thumbnail_path
+            thumbnail_path  # Output file path
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=True
     )
 
-
-def generate_presigned_url(key: str):
+# Give me a temporary, secure URL to access a private S3 object
+# Frontend → Your API → returns presigned URL → Frontend loads image directly from S3
+# Cached for 30 min so the same URL is returned → browser can HTTP-cache the image
+@lru_cache(maxsize=512)
+def _presigned_url(key: str, _bucket: int) -> str:
     return s3_client.generate_presigned_url(
         "get_object",
         Params={
             "Bucket": AWS_BUCKET,
-            "Key": key
+            "Key": key,
+            "ResponseCacheControl": "public, max-age=86400",
         },
-        ExpiresIn=3600
+        ExpiresIn=3600,
     )
+
+def generate_presigned_url(key: str) -> str:
+    return _presigned_url(key, int(time.time()) // 1800)
 
 
 Base.metadata.create_all(bind=engine)
@@ -161,13 +169,13 @@ async def upload_video(
     db: Session = Depends(get_db)
 ):
 
-    contents = await file.read()
+    contents = await file.read() # in bytes it returns
     size = len(contents)
 
-    if not 0 < size <= 200 * MB:
+    if not 0 < size <= 5 * MB:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Supported file size is 0 - 200 MB"
+            detail="Supported file size is 0 - 5 MB"
         )
 
     file_type = magic.from_buffer(contents, mime=True)
@@ -250,21 +258,30 @@ async def upload_video(
     
 @app.get("/videos")
 async def get_videos(
+    page: int = Query(1, ge=1),
+    limit: int = Query(12, ge=1, le=50),
     db: Session = Depends(get_db)
 ):
-    videos = db.query(Video).limit(15).all()
+    total = db.query(Video).count()
+    offset = (page - 1) * limit
+    videos = db.query(Video).options(joinedload(Video.uploader)).offset(offset).limit(limit).all()
 
-    return [
-        {
-            "id": video.id,
-            "title": video.title,
-            "description": video.description,
-            "thumbnail": generate_presigned_url(video.thumbnail_key),
-            "likes": video.likes,
-            "uploader": video.uploader.name
-        }
-        for video in videos
-    ]
+    return {
+        "videos": [
+            {
+                "id": video.id,
+                "title": video.title,
+                "description": video.description,
+                "thumbnail": generate_presigned_url(video.thumbnail_key),
+                "likes": video.likes,
+                "uploader": video.uploader.name
+            }
+            for video in videos
+        ],
+        "page": page,
+        "total": total,
+        "has_more": offset + len(videos) < total
+    }
 # Why video is not returned here?
 # Bec it'll contain data about video and not video, once user clicks on video (i.e page), then it will be redirected and video will play
 
@@ -276,7 +293,7 @@ async def get_video_details(
     video_id: int,
     db: Session = Depends(get_db)
 ):
-    video = db.query(Video).filter(Video.id == video_id).first()
+    video = db.query(Video).options(joinedload(Video.uploader)).filter(Video.id == video_id).first()
 
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -501,6 +518,7 @@ async def get_comments(
 
     comments = (
         db.query(Comment)
+        .options(joinedload(Comment.user))
         .filter(Comment.video_id == video_id)
         .order_by(Comment.timestamp.desc())
         .offset(offset)

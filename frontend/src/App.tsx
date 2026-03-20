@@ -1,13 +1,21 @@
-import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
+import {
+  BrowserRouter,
+  Route,
+  Routes,
+  Navigate,
+  Outlet,
+} from "react-router-dom";
 import { useAppSelector, useAppDispatch } from "./store/hooks";
-import { useEffect } from "react";
+import { useEffect, lazy, Suspense } from "react";
 import { setCredentials } from "./features/authSlice";
+import Header from "./components/Header";
 
-import LoginPage from "./screens/Login";
-import RegisterPage from "./screens/Register";
-import Home from "./screens/Home";
-import Profile from "./screens/Profile";
-import VideoPage from "./screens/VideoPlayer";
+const LoginPage = lazy(() => import("./screens/Login"));
+const RegisterPage = lazy(() => import("./screens/Register"));
+const Home = lazy(() => import("./screens/Home"));
+const Profile = lazy(() => import("./screens/Profile"));
+const VideoPage = lazy(() => import("./screens/VideoPlayer"));
+const UploadPage = lazy(() => import("./screens/Upload"));
 
 // Protected Route Component
 interface ProtectedRouteProps {
@@ -27,6 +35,25 @@ interface PublicRouteProps {
 
 function PublicRoute({ children, isAuthenticated }: PublicRouteProps) {
   return !isAuthenticated ? <>{children}</> : <Navigate to="/" replace />;
+}
+
+function AppLayout() {
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      <Header />
+      <main className="flex-1">
+        <Suspense
+          fallback={
+            <div className="flex items-center justify-center h-[calc(100vh-64px)]">
+              <div className="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          }
+        >
+          <Outlet />
+        </Suspense>
+      </main>
+    </div>
+  );
 }
 
 function App() {
@@ -51,14 +78,14 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Public Routes */}
-        <Route index element={<Home />} />
-
+        {/* Auth routes (no header) */}
         <Route
           path="/login"
           element={
             <PublicRoute isAuthenticated={isAuthenticated}>
-              <LoginPage />
+              <Suspense fallback={null}>
+                <LoginPage />
+              </Suspense>
             </PublicRoute>
           }
         />
@@ -66,29 +93,49 @@ function App() {
           path="/register"
           element={
             <PublicRoute isAuthenticated={isAuthenticated}>
-              <RegisterPage />
+              <Suspense fallback={null}>
+                <RegisterPage />
+              </Suspense>
             </PublicRoute>
           }
         />
 
-        {/* Protected Routes */}
-
-        <Route
-          path="/video/:id"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
-              <VideoPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/profile"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
-              <Profile />
-            </ProtectedRoute>
-          }
-        />
+        {/* Main layout routes (with header) */}
+        <Route element={<AppLayout />}>
+          <Route index element={<Home />} />
+          <Route
+            path="/upload"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated}>
+                <UploadPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/video/:id"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated}>
+                <VideoPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated}>
+                <Profile />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile/:userId"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated}>
+                <Profile />
+              </ProtectedRoute>
+            }
+          />
+        </Route>
 
         {/* Catch-all redirect */}
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -50,7 +50,7 @@ class Comment(Base):
     video_id = Column(Integer, ForeignKey("videos.id"))
 
     content = Column(Text, nullable=False)
-    timestamp = Column(DateTime, default=lambda: datetime.now(datetime.timezone.utc))
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User")
     # video = relationship("Video")
