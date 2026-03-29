@@ -1,14 +1,12 @@
-from datetime import datetime, timedelta, timezone
+import os
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status, APIRouter, Form
+import httpx
+from fastapi import Depends, HTTPException, APIRouter
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
-from pydantic import BaseModel, EmailStr 
+from jose import jwt, JWTError
 from sqlalchemy.orm import Session
-from passlib.context import CryptContext
 
-# import from your main and db app
 from models import User
 from database import get_db
 
@@ -17,136 +15,76 @@ router = APIRouter(
     tags=["auth"]
 )
 
-# -----------------------------
-# JWT CONFIG
-# -----------------------------
-
-SECRET_KEY = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
-
-bcrypt_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+COGNITO_REGION = os.getenv("AWS_DEFAULT_REGION")
+COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID")
+COGNITO_APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID")
+JWKS_URL = f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USER_POOL_ID}/.well-known/jwks.json"
 
 bearer_scheme = HTTPBearer()
 
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
+# cache keys — fetched once, reused forever
+_cognito_keys = None
 
 
 # -----------------------------
-# CREATE JWT TOKEN
+# FETCH COGNITO PUBLIC KEYS
 # -----------------------------
 
-def create_access_token(user_id: int, email: str):
-    payload = {
-        "sub": email,
-        "id": user_id,
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    }
-
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-
-
-# -----------------------------
-# REGISTER
-# -----------------------------
-
-@router.post("/register")
-def register_user(
-    name: str = Form(...),
-    email: EmailStr  = Form(...),
-    password: str = Form(...),
-    db: Session = Depends(get_db)
-):
-
-    existing_user = db.query(User).filter(User.email == email).first()
-
-    if existing_user:
-        raise HTTPException(
-            status_code=400,
-            detail="Email already registered"
-        )
-
-    hashed_password = bcrypt_context.hash(password)
-
-    new_user = User(
-        name=name,
-        email=email,
-        password=hashed_password
-    )
-
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-
-    return {
-        "message": "User registered successfully",
-        "user_id": new_user.id
-    }
+async def get_cognito_keys():
+    global _cognito_keys
+    if _cognito_keys is None:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(JWKS_URL)
+            _cognito_keys = response.json()["keys"]
+    return _cognito_keys
 
 
 # -----------------------------
-# LOGIN (JWT)
+# GET CURRENT USER (COGNITO VERIFY)
 # -----------------------------
 
-@router.post("/login", response_model=Token)
-def login_user(
-    email: str = Form(...),
-    password: str = Form(...),
-    db: Session = Depends(get_db)
-):
-
-    user = db.query(User).filter(User.email == email).first()
-
-    if not user or not bcrypt_context.verify(password, user.password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
-        )
-
-    access_token = create_access_token(user.id, user.name)
-
-    return {
-        "access_token": access_token,
-        "token_type": "bearer"
-    }
-
-
-# -----------------------------
-# GET CURRENT USER (JWT VERIFY)
-# -----------------------------
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+async def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer_scheme)],
     db: Session = Depends(get_db)
 ):
     token = credentials.credentials
+
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        keys = await get_cognito_keys()
 
-        username: str = payload.get("sub")
-        user_id: int = payload.get("id")
-
-        if username is None or user_id is None:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid token"
-            )
-
-    except JWTError:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid token"
+        payload = jwt.decode(
+            token,
+            keys,
+            algorithms=["RS256"],
+            audience=COGNITO_APP_CLIENT_ID,
+            options={"verify_at_hash": False}
         )
 
-    user = db.query(User).filter(User.id == user_id).first()
+        email: str = payload.get("email")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token")
 
-    if user is None:
-        raise HTTPException(
-            status_code=401,
-            detail="User not found"
-        )
+        name: str = payload.get("name", email.split("@")[0])
+
+    except HTTPException:
+        raise
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        user = User(name=name, email=email)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
     return user
+
+
+@router.get("/me")
+async def get_me(user: User = Depends(get_current_user)):
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+    }

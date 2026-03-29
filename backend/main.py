@@ -152,8 +152,11 @@ app.include_router(auth_router)
 
 
 app.add_middleware(
-    CORSMiddleware, 
-    allow_origins=["*"],
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "https://ministream.onrender.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

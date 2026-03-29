@@ -5,10 +5,11 @@ import {
   Navigate,
   Outlet,
 } from "react-router-dom";
-import { useAppSelector, useAppDispatch } from "./store/hooks";
-import { useEffect, lazy, Suspense } from "react";
-import { setCredentials } from "./features/authSlice";
+import { useAppSelector } from "./store/hooks";
+import { lazy, Suspense } from "react";
 import Header from "./components/Header";
+import AuthCallback from "./screens/AuthCallback";
+import { useAuth } from "./hooks/useAuth";
 
 const LoginPage = lazy(() => import("./screens/Login"));
 const RegisterPage = lazy(() => import("./screens/Register"));
@@ -17,7 +18,6 @@ const Profile = lazy(() => import("./screens/Profile"));
 const VideoPage = lazy(() => import("./screens/VideoPlayer"));
 const UploadPage = lazy(() => import("./screens/Upload"));
 
-// Protected Route Component
 interface ProtectedRouteProps {
   children: React.ReactNode;
   isAuthenticated: boolean;
@@ -27,7 +27,6 @@ function ProtectedRoute({ children, isAuthenticated }: ProtectedRouteProps) {
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
-// Public Route Component (redirects to home if authenticated)
 interface PublicRouteProps {
   children: React.ReactNode;
   isAuthenticated: boolean;
@@ -38,6 +37,16 @@ function PublicRoute({ children, isAuthenticated }: PublicRouteProps) {
 }
 
 function AppLayout() {
+  const { loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <Header />
@@ -57,28 +66,13 @@ function AppLayout() {
 }
 
 function App() {
-  const dispatch = useAppDispatch();
   const { isAuthenticated } = useAppSelector((state) => state.auth);
-
-  // Initialize auth state from localStorage on app load
-  useEffect(() => {
-    const user = localStorage.getItem("user");
-    const token = localStorage.getItem("token");
-
-    if (user && token) {
-      dispatch(
-        setCredentials({
-          user: JSON.parse(user),
-          token,
-        }),
-      );
-    }
-  }, [dispatch]);
 
   return (
     <BrowserRouter>
       <Routes>
-        {/* Auth routes (no header) */}
+        <Route path="/auth/callback" element={<AuthCallback />} />
+
         <Route
           path="/login"
           element={
@@ -100,7 +94,6 @@ function App() {
           }
         />
 
-        {/* Main layout routes (with header) */}
         <Route element={<AppLayout />}>
           <Route index element={<Home />} />
           <Route
@@ -137,7 +130,6 @@ function App() {
           />
         </Route>
 
-        {/* Catch-all redirect */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

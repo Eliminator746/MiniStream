@@ -1,9 +1,5 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import type {
-  LoginRequest,
-  RegisterRequest,
-  LoginResponse,
-  RegisterResponse,
   Video,
   VideosResponse,
   Comment,
@@ -41,28 +37,6 @@ export const apiSlice = createApi({
   tagTypes: ["Video", "Comment", "Like", "Profile"],
 
   endpoints: (builder) => ({
-    // ======================== AUTH ========================
-
-    register: builder.mutation<RegisterResponse, RegisterRequest>({
-      query: (body) => ({
-        url: "/auth/register",
-        method: "POST",
-        ...formBody({
-          name: body.name,
-          email: body.email,
-          password: body.password,
-        }),
-      }),
-    }),
-
-    login: builder.mutation<LoginResponse, LoginRequest>({
-      query: (creds) => ({
-        url: "/auth/login",
-        method: "POST",
-        ...formBody({ email: creds.email, password: creds.password }),
-      }),
-    }),
-
     // ======================== VIDEOS ========================
 
     getVideos: builder.query<VideosResponse, { page?: number; limit?: number }>(
@@ -230,8 +204,6 @@ export const apiSlice = createApi({
 });
 
 export const {
-  useRegisterMutation,
-  useLoginMutation,
   useGetVideosQuery,
   useUploadVideoMutation,
   useStreamVideoQuery,

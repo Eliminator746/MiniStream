@@ -10,33 +10,13 @@
 export interface AuthUser {
   id: number;
   name: string;
+  email: string;
 }
 
 export interface AuthState {
   user: AuthUser | null;
   token: string | null;
   isAuthenticated: boolean;
-}
-
-export interface RegisterRequest {
-  name: string;
-  email: string;
-  password: string;
-}
-
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-export interface LoginResponse {
-  access_token: string;
-  token_type: string;
-}
-
-export interface RegisterResponse {
-  message: string;
-  user_id: number;
 }
 
 // ============================================================================

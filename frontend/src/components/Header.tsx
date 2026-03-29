@@ -1,14 +1,14 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { useAppDispatch, useAppSelector } from "../store/hooks";
-import { logout } from "../features/authSlice";
+import { useAppSelector } from "../store/hooks";
+import { useAuth } from "../hooks/useAuth";
 import { Upload } from "lucide-react";
 
 const Header: React.FC = () => {
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const dispatch = useAppDispatch();
+  const { signOut } = useAuth();
 
   const { user, isAuthenticated } = useAppSelector((state) => state.auth);
 
@@ -30,10 +30,9 @@ const Header: React.FC = () => {
     };
   }, []);
 
-  const handleLogout = () => {
-    dispatch(logout());
+  const handleLogout = async () => {
     setOpen(false);
-    navigate("/login", { replace: true });
+    await signOut();
   };
 
   const handleProfile = () => {
