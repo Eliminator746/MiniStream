@@ -21,6 +21,7 @@ idna==3.11
 jmespath==1.1.0
 loguru==0.7.3
 MarkupSafe==3.0.3
+psycopg2-binary==2.9.10
 passlib==1.7.4
 pyasn1==0.6.2
 pycparser==3.0
@@ -29,7 +30,7 @@ pydantic_core==2.41.5
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
 python-jose==3.5.0
-python-magic-bin==0.4.14
+python-magic==0.4.27
 python-multipart==0.0.22
 rsa==4.9.1
 s3transfer==0.16.0
@@ -39,5 +40,4 @@ starlette==0.52.1
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 urllib3==2.6.3
-uvicorn==0.41.0
-win32_setctime==1.2.0
+uvicorn==0.41.0	
