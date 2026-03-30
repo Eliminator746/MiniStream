@@ -13,11 +13,20 @@ export default function AuthCallback() {
   useEffect(() => {
     async function handleCallback() {
       try {
+        console.log("Step 1 - starting callback");
+
         const session = await fetchAuthSession();
+        console.log("Step 2 - session:", session);
+        console.log("Step 3 - tokens:", session.tokens);
 
-        const token = session.tokens?.idToken?.toString();
-        if (!token) throw new Error("No token");
+        const token = session.tokens?.accessToken.toString();
+        console.log("Step 4 - token:", token);
 
+        if (!token) {
+          console.error("No token found in session");
+          navigate("/login", { replace: true });
+          return;
+        }
         // Fetch the user's DB record (includes id) from the backend
         const res = await fetch(`${BASE_URL}/auth/me`, {
           headers: { Authorization: `Bearer ${token}` },
