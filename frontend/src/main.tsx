@@ -1,5 +1,6 @@
 // main.tsx (or index.tsx)
 import "./config/amplifyConfig";
+import "aws-amplify/auth/enable-oauth-listener";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Provider } from "react-redux";
