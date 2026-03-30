@@ -7,6 +7,37 @@ import { useNavigate } from "react-router-dom";
 const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 const LOGOUT_REDIRECT_URL =
   import.meta.env.VITE_LOGOUT_REDIRECT_URL ?? "http://localhost:5173";
+const AUTH_TIMEOUT_MS = 12000;
+
+async function getSessionWithTimeout() {
+  return Promise.race([
+    fetchAuthSession(),
+    new Promise<never>((_, reject) => {
+      setTimeout(
+        () => reject(new Error("Auth session timeout")),
+        AUTH_TIMEOUT_MS,
+      );
+    }),
+  ]);
+}
+
+async function getTokenWithRetry() {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const session = await getSessionWithTimeout();
+    const token =
+      session.tokens?.idToken?.toString() ??
+      session.tokens?.accessToken?.toString() ??
+      null;
+
+    if (token) return token;
+
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+  }
+
+  return null;
+}
 
 export function useAuth() {
   const [token, setToken] = useState<string | null>(null);
@@ -17,8 +48,9 @@ export function useAuth() {
   useEffect(() => {
     async function loadSession() {
       try {
-        const session = await fetchAuthSession();
-        const t = session.tokens?.idToken?.toString();
+        if (!BASE_URL) throw new Error("VITE_API_URL is empty in this build");
+
+        const t = await getTokenWithRetry();
 
         if (!t) throw new Error("No token");
 
@@ -45,7 +77,7 @@ export function useAuth() {
     }
 
     loadSession();
-  }, []);
+  }, [dispatch]);
 
   async function signOut() {
     try {
