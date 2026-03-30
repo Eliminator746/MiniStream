@@ -54,6 +54,9 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({
     return <div className="p-8 text-slate-500">Profile not found</div>;
   }
 
+  const username = profile.username || "User";
+  const subscribersCount = Number(profile.subscribers ?? 0);
+
   return (
     <div className="w-full flex flex-col">
       {/* Cover Image */}
@@ -95,12 +98,12 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({
           {profile.profile_image ? (
             <img
               src={profile.profile_image}
-              alt={profile.username}
+              alt={username}
               className="w-20 h-20 rounded-full object-cover ring-4 ring-white"
             />
           ) : (
             <div className="w-20 h-20 rounded-full bg-teal-500 flex items-center justify-center text-white text-2xl font-bold ring-4 ring-white">
-              {profile.username.charAt(0).toUpperCase()}
+              {username.charAt(0).toUpperCase()}
             </div>
           )}
           {!readOnly && (
@@ -120,11 +123,9 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({
         </div>
 
         <div className="flex-1">
-          <h2 className="text-lg font-bold text-slate-900">
-            {profile.username}
-          </h2>
+          <h2 className="text-lg font-bold text-slate-900">{username}</h2>
           <p className="text-sm text-slate-500">
-            {profile.subscribers.toLocaleString()} subscribers
+            {subscribersCount.toLocaleString()} subscribers
           </p>
         </div>
       </div>

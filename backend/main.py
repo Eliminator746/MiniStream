@@ -380,7 +380,7 @@ def get_profile(user_id: int, db: Session = Depends(get_db)):
         "about": user.about,
         "profile_image": profile_image_url,
         "cover_image": cover_image_url,
-        "subscribers": user.subscribers
+        "subscribers": user.subscribers or 0
     }
 
 # Update profile for userprofile
