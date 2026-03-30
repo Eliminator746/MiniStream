@@ -5,6 +5,7 @@ import httpx
 from fastapi import Depends, HTTPException, APIRouter
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
+from loguru import logger
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -20,12 +21,34 @@ router = APIRouter(
 COGNITO_REGION = os.getenv("AWS_DEFAULT_REGION")
 COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID")
 COGNITO_APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID")
-JWKS_URL = f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USER_POOL_ID}/.well-known/jwks.json"
 
 bearer_scheme = HTTPBearer()
 
 # cache keys — fetched once, reused forever
 _cognito_keys = None
+
+
+def get_cognito_region() -> str | None:
+    # Prefer explicit Cognito region if provided.
+    explicit = os.getenv("COGNITO_REGION")
+    if explicit:
+        return explicit
+
+    if COGNITO_REGION:
+        return COGNITO_REGION
+
+    # Fallback: infer from user pool id, e.g. ap-south-1_xxxxx.
+    if COGNITO_USER_POOL_ID and "_" in COGNITO_USER_POOL_ID:
+        return COGNITO_USER_POOL_ID.split("_", 1)[0]
+
+    return None
+
+
+def get_jwks_url() -> str:
+    region = get_cognito_region()
+    if not region or not COGNITO_USER_POOL_ID:
+        return ""
+    return f"https://cognito-idp.{region}.amazonaws.com/{COGNITO_USER_POOL_ID}/.well-known/jwks.json"
 
 
 # -----------------------------
@@ -35,32 +58,37 @@ _cognito_keys = None
 async def get_cognito_keys():
     global _cognito_keys
     if _cognito_keys is None:
-        if not COGNITO_REGION or not COGNITO_USER_POOL_ID or not COGNITO_APP_CLIENT_ID:
+        jwks_url = get_jwks_url()
+        if not jwks_url or not COGNITO_APP_CLIENT_ID:
             raise HTTPException(
                 status_code=500,
                 detail=(
                     "Cognito configuration missing. "
-                    "Set AWS_DEFAULT_REGION, COGNITO_USER_POOL_ID, and COGNITO_APP_CLIENT_ID."
+                    "Set COGNITO_USER_POOL_ID and COGNITO_APP_CLIENT_ID, and either "
+                    "COGNITO_REGION or AWS_DEFAULT_REGION."
                 ),
             )
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(JWKS_URL)
+                response = await client.get(jwks_url)
                 response.raise_for_status()
                 data = response.json()
         except httpx.HTTPError as e:
+            logger.exception(f"Failed to fetch Cognito JWKS from {jwks_url}")
             raise HTTPException(status_code=500, detail=f"Failed to fetch Cognito JWKS: {str(e)}")
         except ValueError:
+            logger.exception(f"Invalid JSON from Cognito JWKS endpoint: {jwks_url}")
             raise HTTPException(status_code=500, detail="Invalid JSON returned by Cognito JWKS endpoint")
 
         keys = data.get("keys") if isinstance(data, dict) else None
         if not isinstance(keys, list) or not keys:
+            logger.error(f"Invalid JWKS payload from {jwks_url}: {data}")
             raise HTTPException(
                 status_code=500,
                 detail=(
                     "Invalid JWKS response from Cognito. "
-                    f"Check user pool/region config. URL: {JWKS_URL}"
+                    f"Check user pool/region config. URL: {jwks_url}"
                 ),
             )
 
@@ -95,9 +123,11 @@ async def get_current_user(
 
         name: str = payload.get("name", email.split("@")[0])
 
-    except HTTPException:
+    except HTTPException as e:
+        logger.warning(f"Auth HTTPException: {e.detail}")
         raise
     except JWTError as e:
+        logger.warning(f"JWT validation failed: {str(e)}")
         raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
 
     user = db.query(User).filter(User.email == email).first()
@@ -130,6 +160,7 @@ async def get_current_user(
             user = db.query(User).filter(User.email == email).first()
         except Exception as e:
             db.rollback()
+            logger.exception("User provisioning failed")
             raise HTTPException(status_code=500, detail=f"User provisioning failed: {str(e)}")
 
     if not user:
