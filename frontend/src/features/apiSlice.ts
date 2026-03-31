@@ -55,7 +55,7 @@ export const apiSlice = createApi({
     }),
 
     streamVideo: builder.query<VideoStreamResponse, number>({
-      query: (videoId) => `/video/${videoId}`,
+      query: (videoId) => `/stream/${videoId}`,
     }),
 
     uploadVideo: builder.mutation<
@@ -161,7 +161,7 @@ export const apiSlice = createApi({
     // ======================== PROFILE ========================
 
     getProfile: builder.query<UserProfile, number>({
-      query: (userId) => `/profile/${userId}`,
+      query: (userId) => `/profile-data/${userId}`,
       providesTags: (_r, _e, userId) => [{ type: "Profile", id: userId }],
     }),
 

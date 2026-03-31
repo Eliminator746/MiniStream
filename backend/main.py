@@ -320,7 +320,7 @@ async def get_video_details(
     
     
 # Returns the full video file
-@app.get("/video/{video_id}")
+@app.get("/stream/{video_id}")
 async def stream_video(
     video_id: int,
     db: Session = Depends(get_db)
@@ -356,7 +356,7 @@ async def get_user_videos(
 
     
 # Get metadata for userprofile
-@app.get("/profile/{user_id}")
+@app.get("/profile-data/{user_id}")
 def get_profile(user_id: int, db: Session = Depends(get_db)):
 
     user = db.query(User).filter(User.id == user_id).first()
