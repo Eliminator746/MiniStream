@@ -141,12 +141,13 @@ async def get_current_user(
             password_required = bool(password_col and not password_col.get("nullable", True))
 
             if password_required:
+                import random
                 db.execute(
                     text(
-                        "INSERT INTO users (name, email, password) "
-                        "VALUES (:name, :email, :password)"
+                        "INSERT INTO users (name, email, password, subscribers) "
+                        "VALUES (:name, :email, :password, :subscribers)"
                     ),
-                    {"name": name, "email": email, "password": "cognito_user"},
+                    {"name": name, "email": email, "password": "cognito_user", "subscribers": random.randint(50, 10000)},
                 )
                 db.commit()
                 user = db.query(User).filter(User.email == email).first()
